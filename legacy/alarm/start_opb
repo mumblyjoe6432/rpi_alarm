@@ -1,0 +1,2 @@
+#!/bin/bash
+mpg123 --loop -1 -@ http://www.opb.org/programs/streams/opb-radio.pls

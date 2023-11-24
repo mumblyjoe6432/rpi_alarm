@@ -1,0 +1,8 @@
+#!/bin/bash
+python /home/pi/alarm/reset_gpios.py
+python /home/pi/alarm/reset_gpios.py
+/home/pi/clock/clock
+python /home/pi/alarm/reset_gpios.py
+python /home/pi/alarm/reset_gpios.py
+/home/pi/alarm/start_opb
+python /home/pi/alarm/turn_off_lights.py

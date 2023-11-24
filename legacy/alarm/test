@@ -1,0 +1,2 @@
+#!/bin/bash
+python /home/pi/alarm/ping_phone.py

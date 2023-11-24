@@ -1,0 +1,49 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          alarm
+# Required-Start:    hostname $local_fs
+# Required-Stop:
+# Should-Start:
+# Default-Start:     1 2 3 4 5
+# Default-Stop:
+# Short-Description: Starts the alarm program.
+# Description:       Starts the alarm program.
+### END INIT INFO
+
+PATH=/sbin:/usr/sbin:/bin:/usr/bin:/home/pi/alarm
+. /lib/init/vars.sh
+
+do_start () {
+	python /home/pi/alarm/button_detect_v3.py &
+}
+
+do_status () {
+	if [ -f /var/run/motd.dynamic ] ; then
+		return 0
+	else
+		return 4
+	fi
+}
+
+case "$1" in
+  start|"")
+	do_start
+	;;
+  restart|reload|force-reload)
+	echo "Error: argument '$1' not supported" >&2
+	exit 3
+	;;
+  stop)
+	touch /home/pi/alarm/killalarm.kill
+	;;
+  status)
+	do_status
+	exit $?
+	;;
+  *)
+	echo "Usage: motd [start|stop|status]" >&2
+	exit 3
+	;;
+esac
+
+:
