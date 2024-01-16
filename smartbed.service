@@ -1,0 +1,8 @@
+[Unit]
+Description=Smart Alarm Script
+
+[Service]
+ExecStart=/home/gabe/git/rpi_alarm/smart_bed.py
+
+[Install]
+WantedBy=multi-user.target
