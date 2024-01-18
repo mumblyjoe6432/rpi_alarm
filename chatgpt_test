@@ -1,0 +1,52 @@
+import vlc
+import threading
+import time
+
+class VLCPlayer:
+    def __init__(self):
+        self.instance = vlc.Instance()
+        self.media_list_player = self.instance.media_list_player_new()
+        self.media_list = self.instance.media_list_new()
+        self.media_list_player.set_media_list(self.media_list)
+        self.play_thread = None
+
+    def _play(self, file_list):
+        for file_path in file_list:
+            media = self.instance.media_new(file_path)
+            self.media_list.add_media(media)
+
+        self.media_list_player.play()
+
+    def play_files(self, file_list):
+        if not self.play_thread or not self.play_thread.is_alive():
+            self.play_thread = threading.Thread(target=self._play, args=(file_list,))
+            self.play_thread.start()
+
+    def stop(self):
+        self.media_list_player.stop()
+
+    def is_playing(self):
+        return self.media_list_player.get_state() == vlc.State.Playing
+
+# Example usage:
+player = VLCPlayer()
+
+# Play multiple files asynchronously
+#sound = '/home/gabe/Music/alarms/mixkit-battleship-alarm-1001.mp3'
+#sound = '/home/gabe/Music/sexy_music/Lets Get It On.mp3'
+files_to_play = ["/home/gabe/Music/alarms/mixkit-battleship-alarm-1001.mp3", "/home/gabe/Music/sexy_music/Lets Get It On.mp3"]
+player.play_files(files_to_play)
+
+# Main function continues while music is playing in the background
+time.sleep(2)  # Main thread continues without waiting for the music to finish
+
+# Check if music is playing
+print(player.is_playing())  # This should print True
+
+time.sleep(50)
+
+# Stop the playback if needed
+player.stop()
+print("Player should be stopped")
+
+time.sleep(50)
