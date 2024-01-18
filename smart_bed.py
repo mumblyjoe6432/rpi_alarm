@@ -9,6 +9,8 @@ import pdb
 import threading
 import subprocess
 import psutil
+import vlc
+import random
 
 class smart_bed:
     def __init__(self):
@@ -16,6 +18,7 @@ class smart_bed:
         self.logfile_filepath = "/home/gabe/.smartbed/smart_bed.log"
         logging.basicConfig(level=logging.INFO, filename=self.logfile_filepath, format='%(asctime)s - %(levelname)s - %(filename)s:%(funcName)s: %(message)s')
         logging.info("Log Started")
+        logging.info(f"The PID is {os.getpid()}")
 
         #***********************************************
         #IMPORTANT FILE LOCATIONS
@@ -23,8 +26,6 @@ class smart_bed:
         #Maybe one day just integrate into a cfg file?
         self.cron_alarm_filepath = "/home/gabe/.smartbed/startalarm.start"
         logging.info(f"cron_alarm file located at {self.cron_alarm_filepath}")
-        self.mpg123_log_filepath = "/home/gabe/.smartbed/mpg123.log"
-        logging.info(f"mpg123 stdout file located at {self.mpg123_log_filepath}")
 
         #***********************************************
         #OTHER VARIABLES
@@ -77,7 +78,7 @@ class smart_bed:
         self.alarm_handle = alarm_sequence(self.led_handle.set_pwm, self.alarm_activate)
 
         #Music class
-        self.music_handle = sound_blaster(self.sexy_music_dir, self.alarm_filepath, self.mpg123_log_filepath)
+        self.music_handle = sound_blaster(self.sexy_music_dir, self.alarm_filepath)
 
         self.mainloop()
 
@@ -123,8 +124,8 @@ class smart_bed:
         if self.alarm_handle.alarm_active:
             self.alarm_handle.alarm_active = False
             return
-        if self.music_handle.is_music_running():
-            self.music_handle.stop_music()
+        if self.music_handle.is_playing():
+            self.music_handle.stop()
             return
         self.music_handle.play_sexy_music()
         pass
@@ -192,7 +193,7 @@ class smart_bed:
         logging.info("Keypad button # detected!")
         pass
 
-class device_tracker():
+class device_tracker:
     def __init__(self, device_ip):
         self.device_ip = device_ip
         self.initialize_devicetrack_dict()
@@ -238,7 +239,7 @@ class device_tracker():
         logging.debug("Device present")
         return True
 
-class alarm_sequence():
+class alarm_sequence:
     def __init__(self, pwm_function, alarm_finish_function):
         self.alarm_active = False
         self.pwm_function = pwm_function
@@ -262,61 +263,56 @@ class alarm_sequence():
         self.alarm_active = False
         self.alarm_finish_function()
 
-class sound_blaster():
-    def __init__(self, sexy_music_dir, alarm_filepath, stdout_file = None):
+class sound_blaster:
+    def __init__(self, sexy_music_dir, alarm_filepath):
         self.sexy_music_dir = sexy_music_dir
         self.alarm_filepath = alarm_filepath
-        self.music_proc = None
-        self.music_proc_pid = 0
-        self.stdout_file = stdout_file
-        logging.info("Sound blaster initialized")
+        self.instance = vlc.Instance()
+        self.media_list_player = self.instance.media_list_player_new()
+        self.play_thread = None
+        logging.info("Sound controller initialized")
 
-    def play_directory(self, directory, random=True):
-        logging.info(f"Playing music from directory {directory}")
+    def _play(self, file_list, repeat_count=0, total_playtime=0):
+        total_duration = 0
+        self.media_list = self.instance.media_list_new()
+        self.media_list_player.set_media_list(self.media_list)
+        for file_path in file_list:
+            media = self.instance.media_new(file_path)
+            self.media_list.add_media(media)
+            total_duration += media.get_duration() / 1000  # Duration in seconds
+
+        self.media_list_player.set_playback_mode(vlc.PlaybackMode.loop)  # Set loop mode
+        self.media_list_player.play()
+
+        if total_playtime > 0:
+            # If total playtime is set, just wait for that total playtime
+            time.sleep(total_playtime)
+        elif repeat_count > 0:
+            # If repeat_count is set, wait for the total duration of the playlist multiplied by the repeat count
+            time.sleep(total_duration * repeat_count)
+
+    def play_files(self, file_list, shuffle=False, repeat_count=0, total_playtime=0):
+        if shuffle:
+            random.shuffle(file_list)
+        if not self.play_thread or not self.play_thread.is_alive():
+            logging.info(f"Started the music player")
+            self.play_thread = threading.Thread(target=self._play, args=(file_list, repeat_count, total_playtime))
+            self.play_thread.start()
+
+    def stop(self):
+        logging.info(f"Stopped the music player")
+        self.media_list_player.stop()
+
+    def is_playing(self):
+        return self.media_list_player.get_state() == vlc.State.Playing
+    
+    def play_directory(self, directory, shuffle=True):
         song_filenames = os.listdir(directory)
         song_filepaths = []
         for song_filename in song_filenames:
             song_filepaths.append(directory + '/' + song_filename)
-        #song_filepaths = ['mpg123', '-q', '-o', 'alsa'] + song_filepaths
-            song_filepaths = ['mpg123', '-q'] + song_filepaths
-        if random:
-            song_filepaths.insert(2, '-z')
-        self.output_file = open(self.stdout_file, 'a')
-        self.music_proc = subprocess.Popen(song_filepaths, stdout = self.output_file, stderr = subprocess.STDOUT)
-        self.music_proc_pid = self.music_proc.pid
-        logging.info(f"Music proc PID {self.music_proc_pid}")
-
-    def play_file(self, file, repeat = False):
-        logging.info(f"Playing music from file {file}")
-        song_file_list = ['mpg123', '-q'] + [file]
-        if repeat:
-            song_file_list.insert(2, '--loop')
-            song_file_list.insert(3, '-1')
-            self.output_file = open(self.stdout_file, 'a')
-        self.music_proc = subprocess.Popen(song_file_list, stdout = self.output_file, stderr = subprocess.STDOUT)
-        self.music_proc_pid = self.music_proc.pid
-        logging.info(f"Music proc PID {self.music_proc_pid}")
-
-    def stop_music(self):
-        logging.info(f"Stopping music process")
-        self.music_proc.terminate()
-        self.output_file.close()
-
-
-    def is_music_running(self):
-        if self.music_proc == None:
-            logging.debug("music_proc=NONE")
-            return False
-        pid = self.music_proc.pid
-        if psutil.pid_exists(pid):
-            if psutil.Process(pid).status() == psutil.STATUS_RUNNING:
-                logging.debug("Music is running")
-                return True
-            if psutil.Process(pid).status() == psutil.STATUS_SLEEPING:
-                logging.debug("Music is sleeping")
-                return True
-        logging.debug("Music is not running")
-        return False
+        self.play_files(song_filepaths, shuffle=shuffle)
+        logging.info(f"Music started from directory {directory}")
 
     def play_sexy_music(self):
         logging.info(f"Playing sexy music")
@@ -324,9 +320,73 @@ class sound_blaster():
 
     def play_alarm(self):
         logging.info(f"Playing alarm sound")
-        self.play_file(self.alarm_filepath, repeat=True)
+        self.play_files([self.alarm_filepath], total_playtime=3600)
 
-class hw_pwm():
+# class sound_blaster:
+#     def __init__(self, sexy_music_dir, alarm_filepath, stdout_file = None):
+#         self.sexy_music_dir = sexy_music_dir
+#         self.alarm_filepath = alarm_filepath
+#         self.music_proc = None
+#         self.music_proc_pid = 0
+#         self.stdout_file = stdout_file
+#         logging.info("Sound blaster initialized")
+
+#     def play_directory(self, directory, random=True):
+#         logging.info(f"Playing music from directory {directory}")
+#         song_filenames = os.listdir(directory)
+#         song_filepaths = []
+#         for song_filename in song_filenames:
+#             song_filepaths.append(directory + '/' + song_filename)
+#         #song_filepaths = ['mpg123', '-q', '-o', 'alsa'] + song_filepaths
+#             song_filepaths = ['mpg123', '-q'] + song_filepaths
+#         if random:
+#             song_filepaths.insert(2, '-z')
+#         self.output_file = open(self.stdout_file, 'a')
+#         self.music_proc = subprocess.Popen(song_filepaths, stdout = self.output_file, stderr = subprocess.STDOUT)
+#         self.music_proc_pid = self.music_proc.pid
+#         logging.info(f"Music proc PID {self.music_proc_pid}")
+
+#     def play_file(self, file, repeat = False):
+#         logging.info(f"Playing music from file {file}")
+#         song_file_list = ['mpg123', '-q'] + [file]
+#         if repeat:
+#             song_file_list.insert(2, '--loop')
+#             song_file_list.insert(3, '-1')
+#             self.output_file = open(self.stdout_file, 'a')
+#         self.music_proc = subprocess.Popen(song_file_list, stdout = self.output_file, stderr = subprocess.STDOUT)
+#         self.music_proc_pid = self.music_proc.pid
+#         logging.info(f"Music proc PID {self.music_proc_pid}")
+
+#     def stop_music(self):
+#         logging.info(f"Stopping music process")
+#         self.music_proc.terminate()
+#         self.output_file.close()
+
+
+#     def is_music_running(self):
+#         if self.music_proc == None:
+#             logging.debug("music_proc=NONE")
+#             return False
+#         pid = self.music_proc.pid
+#         if psutil.pid_exists(pid):
+#             if psutil.Process(pid).status() == psutil.STATUS_RUNNING:
+#                 logging.debug("Music is running")
+#                 return True
+#             if psutil.Process(pid).status() == psutil.STATUS_SLEEPING:
+#                 logging.debug("Music is sleeping")
+#                 return True
+#         logging.debug("Music is not running")
+#         return False
+
+#     def play_sexy_music(self):
+#         logging.info(f"Playing sexy music")
+#         self.play_directory(self.sexy_music_dir)
+
+#     def play_alarm(self):
+#         logging.info(f"Playing alarm sound")
+#         self.play_file(self.alarm_filepath, repeat=True)
+
+class hw_pwm:
     def __init__(self, gpio_num):
         self.gpio_num = gpio_num
         self.dutycycle = 0
@@ -349,7 +409,7 @@ class hw_pwm():
         pwm_int = int(pwm*10000)
         self.pwmobj.hardware_PWM(self.gpio_num, self.freq, pwm_int)
 
-class button():
+class button:
     def __init__(self, gpio_num, callback_function):
         self.gpio_num = gpio_num
         self.callback_function = callback_function
@@ -361,7 +421,7 @@ class button():
         gpio.setup(self.gpio_num, gpio.IN, pull_up_down=gpio.PUD_UP)
         gpio.add_event_detect(self.gpio_num, gpio.FALLING, bouncetime=2000, callback=self.callback_function)
 
-class switch():
+class switch:
     def __init__(self, gpio_num):
         self.gpio_num = gpio_num
         self.setup_gpio()
@@ -374,7 +434,7 @@ class switch():
     def get_state(self):
         return gpio.input(self.gpio_num)
 
-class keypad():
+class keypad:
     def __init__(self, pin_dict, callback_function):
         self.pin_dict = pin_dict
         self.callback_function = callback_function
