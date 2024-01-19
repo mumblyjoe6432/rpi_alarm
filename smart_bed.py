@@ -11,6 +11,9 @@ import subprocess
 import psutil
 import vlc
 import random
+import yaml
+import signal
+from queue import Queue
 
 class smart_bed:
     def __init__(self):
@@ -44,16 +47,16 @@ class smart_bed:
 
         #Define GPIOs
         self.keypad_gpio_defs = {
-            'row1':3,
-            'row2':2,
-            'row3':1,
-            'row4':0,
-            'col1':6,
-            'col2':5,
-            'col3':4
+            'row1':26,
+            'row2':19,
+            'row3':13,
+            'row4':6,
+            'col1':21,
+            'col2':20,
+            'col3':16
         }
-        self.smiley_button_gpio = 7
-        self.switch1_gpio = 8
+        self.smiley_button_gpio = 1
+        self.switch1_gpio = 25
         self.led_gpio = 18
 
         #***********************************************
@@ -62,7 +65,7 @@ class smart_bed:
         self.keypad_handle = keypad(self.keypad_gpio_defs, self.keypad_btn_decode)
 
         #Initialize the smileyface button
-        self.smiley_handle = button(self.smiley_button_gpio, self.smiley_button)
+        self.smiley_handle = toggle_button(self.smiley_button_gpio, self.smiley_button)
 
         #Initialize the switch
         self.switch1_handle = switch(self.switch1_gpio)
@@ -72,7 +75,7 @@ class smart_bed:
 
         #Cell phone device tracking class
         self.device_tracker_handle = device_tracker(self.gabephone_ip)
-        self.device_tracker_handle._debug_force_devicetrack_true()
+        #self.device_tracker_handle._debug_force_devicetrack_true()
 
         #Alarm class
         self.alarm_handle = alarm_sequence(self.led_handle.set_pwm, self.alarm_activate)
@@ -82,19 +85,30 @@ class smart_bed:
 
         self.mainloop()
 
+        signal.signal(signal.SIGINT, self.signal_handler)
+        signal.signal(signal.SIGTERM, self.signal_handler)
+
     def mainloop(self):
         logging.info("Main loop begin")
         #Blink lights to show that we're starting the main loop
         self.blink_lights()
+
         while(True):
-            time.sleep(10)
+            time.sleep(0.01)
+
+            if not self.keypad_handle.keypad_queue.empty():
+                self.keypad_btn_decode(self.keypad_handle.keypad_queue.get())
 
             #See if we need to ping the cell phone
-            self.device_tracker_handle.update_devicetrack_if_necessary()
+            # self.device_tracker_handle.update_devicetrack_if_necessary()
 
             #See if we should start the alarm
             self.check_alarm()
             pass
+
+    def signal_handler(self):
+        self.keypad_handle.stop_thread()
+        self.device_tracker_handle.stop_ping_loop()
 
     def blink_lights(self):
         self.led_handle.set_pwm(0)
@@ -197,8 +211,9 @@ class device_tracker:
     def __init__(self, device_ip):
         self.device_ip = device_ip
         self.initialize_devicetrack_dict()
-        self.current_hr = int(time.localtime()[3])
-        self.ping()
+        self.current_hr = int(time.localtime()[3])-1
+        self.stop_flag = threading.Event()
+        self.start_ping_loop()
         logging.info("Device tracker successfully initialized")
 
     def initialize_devicetrack_dict(self):
@@ -210,22 +225,31 @@ class device_tracker:
         for i in range(24):
             self.devicetrack[i] = True
 
-    def update_devicetrack_if_necessary(self):
-        if self.current_hr != int(time.localtime()[3]):
-            self.ping()
-
     def ping(self):
-        command = "ping -c 30 " + self.device_ip
+        command = "ping -c 10 " + self.device_ip
         result = os.system(f"{command} > /dev/null 2>&1") #Add output suppression to the command
-        hr = int(time.localtime()[3])
-        self.current_hr = hr
         if result == 0:
-            self.devicetrack[hr] = True
             logging.info("Initialized device WAS found on the network.")
+            return True
         else:
-            self.devicetrack[hr] = False
             logging.info("Initialized device WAS NOT found on the network.")
-        self.current_hr = hr
+            return False
+
+    def ping_loop(self):
+        while(1):
+            hr = int(time.localtime()[3])
+            if self.current_hr != hr:
+                self.devicetrack[hr] = self.ping()
+                self.current_hr = hr
+            time.sleep(10)
+
+    def start_ping_loop(self):
+        self.ping_thread = threading.Thread(target=self.ping_loop)
+        self.ping_thread.start()
+
+    def stop_ping_loop(self):
+        self.stop_flag.set()
+        self.ping_thread.join()
 
     def is_device_present(self, trailing_hours = 6):
         hr = int(time.localtime()[3])
@@ -322,70 +346,6 @@ class sound_blaster:
         logging.info(f"Playing alarm sound")
         self.play_files([self.alarm_filepath], total_playtime=3600)
 
-# class sound_blaster:
-#     def __init__(self, sexy_music_dir, alarm_filepath, stdout_file = None):
-#         self.sexy_music_dir = sexy_music_dir
-#         self.alarm_filepath = alarm_filepath
-#         self.music_proc = None
-#         self.music_proc_pid = 0
-#         self.stdout_file = stdout_file
-#         logging.info("Sound blaster initialized")
-
-#     def play_directory(self, directory, random=True):
-#         logging.info(f"Playing music from directory {directory}")
-#         song_filenames = os.listdir(directory)
-#         song_filepaths = []
-#         for song_filename in song_filenames:
-#             song_filepaths.append(directory + '/' + song_filename)
-#         #song_filepaths = ['mpg123', '-q', '-o', 'alsa'] + song_filepaths
-#             song_filepaths = ['mpg123', '-q'] + song_filepaths
-#         if random:
-#             song_filepaths.insert(2, '-z')
-#         self.output_file = open(self.stdout_file, 'a')
-#         self.music_proc = subprocess.Popen(song_filepaths, stdout = self.output_file, stderr = subprocess.STDOUT)
-#         self.music_proc_pid = self.music_proc.pid
-#         logging.info(f"Music proc PID {self.music_proc_pid}")
-
-#     def play_file(self, file, repeat = False):
-#         logging.info(f"Playing music from file {file}")
-#         song_file_list = ['mpg123', '-q'] + [file]
-#         if repeat:
-#             song_file_list.insert(2, '--loop')
-#             song_file_list.insert(3, '-1')
-#             self.output_file = open(self.stdout_file, 'a')
-#         self.music_proc = subprocess.Popen(song_file_list, stdout = self.output_file, stderr = subprocess.STDOUT)
-#         self.music_proc_pid = self.music_proc.pid
-#         logging.info(f"Music proc PID {self.music_proc_pid}")
-
-#     def stop_music(self):
-#         logging.info(f"Stopping music process")
-#         self.music_proc.terminate()
-#         self.output_file.close()
-
-
-#     def is_music_running(self):
-#         if self.music_proc == None:
-#             logging.debug("music_proc=NONE")
-#             return False
-#         pid = self.music_proc.pid
-#         if psutil.pid_exists(pid):
-#             if psutil.Process(pid).status() == psutil.STATUS_RUNNING:
-#                 logging.debug("Music is running")
-#                 return True
-#             if psutil.Process(pid).status() == psutil.STATUS_SLEEPING:
-#                 logging.debug("Music is sleeping")
-#                 return True
-#         logging.debug("Music is not running")
-#         return False
-
-#     def play_sexy_music(self):
-#         logging.info(f"Playing sexy music")
-#         self.play_directory(self.sexy_music_dir)
-
-#     def play_alarm(self):
-#         logging.info(f"Playing alarm sound")
-#         self.play_file(self.alarm_filepath, repeat=True)
-
 class hw_pwm:
     def __init__(self, gpio_num):
         self.gpio_num = gpio_num
@@ -410,6 +370,7 @@ class hw_pwm:
         self.pwmobj.hardware_PWM(self.gpio_num, self.freq, pwm_int)
 
 class button:
+    #Button that sends a pulse for the duration of the press
     def __init__(self, gpio_num, callback_function):
         self.gpio_num = gpio_num
         self.callback_function = callback_function
@@ -420,6 +381,19 @@ class button:
         #Setup the GPIO direction
         gpio.setup(self.gpio_num, gpio.IN, pull_up_down=gpio.PUD_UP)
         gpio.add_event_detect(self.gpio_num, gpio.FALLING, bouncetime=2000, callback=self.callback_function)
+
+class toggle_button:
+    #Button that changes the state from 0->1 or 1->0 on each press (so we need to detect an event for both)
+    def __init__(self, gpio_num, callback_function):
+        self.gpio_num = gpio_num
+        self.callback_function = callback_function
+        self.setup_gpio()
+        logging.info(f"Button initialized on GPIO{gpio_num}")
+
+    def setup_gpio(self):
+        #Setup the GPIO direction
+        gpio.setup(self.gpio_num, gpio.IN, pull_up_down=gpio.PUD_UP)
+        gpio.add_event_detect(self.gpio_num, gpio.BOTH, bouncetime=2000, callback=self.callback_function)
 
 class switch:
     def __init__(self, gpio_num):
@@ -435,9 +409,66 @@ class switch:
         return gpio.input(self.gpio_num)
 
 class keypad:
+    #This keypad function is meant to be called every 0.1 seconds as the other keypad function wasn't working properly
+    #Still not sure why the other one doesn't work well tbh
     def __init__(self, pin_dict, callback_function):
         self.pin_dict = pin_dict
         self.callback_function = callback_function
+        self.keypad_queue = Queue()
+        self.setup_gpios()
+        self.stop_flag = threading.Event()
+        logging.info(f"Keypad initialized successfully")
+
+        self._start_thread()
+
+    def _start_thread(self):
+        #Initialize the keypad_loop thread
+        self.keypad_thread = threading.Thread(target=self._keypad_loop)
+        self.keypad_thread.start()
+
+    def setup_gpios(self):
+        gpio.setup(self.pin_dict['row1'], gpio.OUT)
+        gpio.setup(self.pin_dict['row2'], gpio.OUT)
+        gpio.setup(self.pin_dict['row3'], gpio.OUT)
+        gpio.setup(self.pin_dict['row4'], gpio.OUT)
+        gpio.setup(self.pin_dict['col1'], gpio.IN, pull_up_down=gpio.PUD_DOWN)
+        gpio.setup(self.pin_dict['col2'], gpio.IN, pull_up_down=gpio.PUD_DOWN)
+        gpio.setup(self.pin_dict['col3'], gpio.IN, pull_up_down=gpio.PUD_DOWN)
+
+    def _check_line(self, row, characters):
+        gpio.output(row, gpio.HIGH)
+        time.sleep(0.01)
+        if gpio.input(self.pin_dict['col1']) == 1:
+            print("col1")
+            self.keypad_queue.put(characters[0])
+            time.sleep(0.3)
+        elif gpio.input(self.pin_dict['col2']) == 1:
+            print("col2")
+            self.keypad_queue.put(characters[1])
+            time.sleep(0.3)
+        elif gpio.input(self.pin_dict['col3']) == 1:
+            print("col3")
+            self.keypad_queue.put(characters[2])
+            time.sleep(0.3)
+        gpio.output(row, gpio.LOW)
+
+    def _keypad_loop(self):
+        while(True):
+            self._check_line(self.pin_dict['row1'], ["1","2","3"])
+            self._check_line(self.pin_dict['row2'], ["4","5","6"])
+            self._check_line(self.pin_dict['row3'], ["7","8","9"])
+            self._check_line(self.pin_dict['row4'], ["star","0","pound"])
+            time.sleep(0.05)
+
+    def stop_thread(self):
+        self.stop_flag.set()
+        self.keypad_thread.join()
+
+class keypad2:
+    def __init__(self, pin_dict, callback_function):
+        self.pin_dict = pin_dict
+        self.callback_function = callback_function
+        self.keypad_queue = Queue()
         self.setup_gpios()
         logging.info(f"Keypad initialized successfully")
 
@@ -495,7 +526,6 @@ class keypad:
         if gpio.input(self.pin_dict[colname]) == 0:
             logging.debug("Detected a row1 press")
             self.reset_row_gpios()
-            self.keypress_active = False
             if colnum == 1:
                 self.callback_function('1')
             elif colnum == 2:
@@ -504,6 +534,8 @@ class keypad:
                 self.callback_function('3')
             else:
                 logging.debug("Unable to determine the button from a row1 press")
+            time.sleep(0.5)
+            self.keypress_active = False
             return
 
         #Is it row 2?
@@ -511,7 +543,6 @@ class keypad:
         if gpio.input(self.pin_dict[colname]) == 0:
             logging.debug("Detected a row2 press")
             self.reset_row_gpios()
-            self.keypress_active = False
             if colnum == 1:
                 self.callback_function('4')
             elif colnum == 2:
@@ -520,6 +551,8 @@ class keypad:
                 self.callback_function('6')
             else:
                 logging.debug("Unable to determine the button from a row2 press")
+            time.sleep(0.5)
+            self.keypress_active = False
             return
 
         #Is it row 3?
@@ -527,7 +560,6 @@ class keypad:
         if gpio.input(self.pin_dict[colname]) == 0:
             logging.debug("Detected a row3 press")
             self.reset_row_gpios()
-            self.keypress_active = False
             if colnum == 1:
                 self.callback_function('7')
             elif colnum == 2:
@@ -536,6 +568,8 @@ class keypad:
                 self.callback_function('9')
             else:
                 logging.debug("Unable to determine the button from a row3 press")
+            time.sleep(0.5)
+            self.keypress_active = False
             return
         
         #Is it row 4?
@@ -543,7 +577,6 @@ class keypad:
         if gpio.input(self.pin_dict[colname]) == 0:
             logging.debug("Detected a row4 press")
             self.reset_row_gpios()
-            self.keypress_active = False
             if colnum == 1:
                 self.callback_function('star')
             elif colnum == 2:
@@ -552,8 +585,12 @@ class keypad:
                 self.callback_function('pound')
             else:
                 logging.debug("Unable to determine the button from a row4 press")
+            time.sleep(0.5)
+            self.keypress_active = False
             return
         
+        time.sleep(0.5)
+        self.keypress_active = False
         logging.debug("Unable to find what row triggered the button")
 
     def get_colnum_from_gpio(self, gpionum):
