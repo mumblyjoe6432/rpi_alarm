@@ -29,11 +29,6 @@ class VLCPlayer:
             self.stop_event.set()
             self.play_thread.join()
 
-    def kill(self):
-        if self.play_thread and self.play_thread.is_alive():
-            self.stop_event.set()
-            self.play_thread.join()
-
 # Example usage:
 audio_file_path = "your_audio_file.mp3"
 player = VLCPlayer(audio_file_path)
