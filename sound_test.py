@@ -3,7 +3,8 @@ import time
 import threading
 
 sound = '/home/gabe/Music/alarms/mixkit-battleship-alarm-1001.mp3'
-sound = '/home/gabe/Music/sexy_music/Lets Get It On.mp3'
+sound_filepath = '/home/gabe/Music/music_playlist/Hoobastank - Inside Of You.mp3'
+sound_filepath = '/home/gabe/Music/golden_kpop_demon_hunters.mp3'
 
 class VLCPlayer:
     def __init__(self, file_path):
@@ -30,7 +31,7 @@ class VLCPlayer:
             self.play_thread.join()
 
 # Example usage:
-audio_file_path = "your_audio_file.mp3"
+audio_file_path = sound_filepath
 player = VLCPlayer(audio_file_path)
 
 # Start playing
